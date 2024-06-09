@@ -50,8 +50,10 @@ class Flex2023_moabb(BaseDataset):
         self.runs = -1
     
     def _flow(self, raw0, stim):
+
         ## get eeg (32,N)
         data = raw0.get_data(picks=EEG_CH_NAMES)
+
         # stack eeg (32,N) with stim (1,N) => (32, N)
         data = np.vstack([data, stim.reshape(1,-1)])
 
@@ -90,7 +92,7 @@ class Flex2023_moabb(BaseDataset):
         return {"0": {"0": raw}}
 
 
-    def data_path(self, subject, **kwargs):
+    def data_path(self, subject, path=None, force_update=False, update_path=None, verbose=None):
         list_edf = []
         for root, dirs, files in os.walk(ROOT):
             for file in files:
@@ -99,8 +101,6 @@ class Flex2023_moabb(BaseDataset):
                     (".md" not in file):
                         list_edf.append(os.path.join(root, file))
         return list_edf
-
-
 
 
 
