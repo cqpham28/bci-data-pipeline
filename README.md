@@ -13,3 +13,5 @@ The output can be implemented into MOABB benchmark analysis.
   - **flex2023**: dataset from our current work (using EMOTIV FLEX). 
   - **bk2019**: dataset from our previous work (using NICOLET NATUS), published in BME8 2020 ([link](https://link.springer.com/chapter/10.1007/978-3-030-75506-5_16))
 
+
+![image](https://github.com/user-attachments/assets/be150bbb-bbff-407d-a79c-f6c4b63b887b)
