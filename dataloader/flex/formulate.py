@@ -10,18 +10,19 @@ cuongquocpham151@gmail.com
 import numpy as np
 from moabb.paradigms import MotorImagery, FilterBankMotorImagery
 from sklearn.preprocessing import LabelEncoder
+from config import *
+
 
 
 ################################
 class Formulate():
     def __init__(
         self, 
-        dataset = None, 
-        fs = 128, 
+        dataset = None,  
         subject = 1, 
         bandpass = [[8,13]],
         channels = ("C3", "Cz", "C4"),
-        t_rest = (-2,0),
+        t_rest = (-4,-2),
         t_mi = (0,2),
         run_to_split = None,
         ):
@@ -29,7 +30,7 @@ class Formulate():
         Usage:
             dataset = Flex2023_moabb()
             dataset.runs = 1
-            f = Formulate(dataset, fs=128, subject=1, 
+            f = Formulate(dataset, subject=1, 
                         bandpass = [[8,13]],
                         channels = ("C3", "Cz", "C4"),
                         t_rest = (-4,-2),
@@ -39,7 +40,6 @@ class Formulate():
             x, y = f.form(model_name="MI_2class_hand")
         """
         self.dataset = dataset
-        self.fs = fs
         self.subject = subject
         self.bandpass = bandpass
         self.channels = channels
@@ -47,16 +47,15 @@ class Formulate():
         self.t_mi = t_mi
         self.run_to_split = run_to_split
 
-        self.event_ids_all = dataset.event_id
-        self.event_ids_hand = dict(right_hand=1, left_hand=2)
-        self.event_ids_foot = dict(right_foot=3, left_foot=4)
-
-
     #-----------------------------------#
     def _extract_split_run(self, event_ids, interval):
         """ 
-        Function to split run for data that has run combined 
-        Usage for F10, F11 only 
+        Function to split run for data that has run combined (for F10, F11 only).
+        Usage:
+            if self.run_to_split is not None:
+                x, y = self._extract_split_run(self.event_ids_hand, self.t_mi)
+            else:
+                x, y = self._extract("xy", self.event_ids_hand, self.t_mi)
         """
 
         x, y = self._extract("xy", self.event_ids_all, interval)
@@ -90,11 +89,11 @@ class Formulate():
                     events = list(event_ids.keys()),
                     n_classes = len(event_ids.keys()),
                     fmin = 0, 
-                    fmax = self.fs/2-0.001, 
+                    fmax = FS/2-0.001, 
                     tmin = interval[0], 
                     tmax = interval[1], 
                     channels=self.channels,
-                    resample=128,
+                    resample=FS,
                     )
 
         elif len(self.bandpass) == 1:
@@ -106,7 +105,7 @@ class Formulate():
                     tmin = interval[0], 
                     tmax = interval[1], 
                     channels=self.channels,
-                    resample=128,
+                    resample=FS,
                     )
         
         elif len(self.bandpass) > 1:
@@ -117,133 +116,155 @@ class Formulate():
                     tmin = interval[0],
                     tmax = interval[1],
                     channels=self.channels,
-                    resample=128,
+                    resample=FS,
                     )
 
         if returns == "epochs":
             # do not use epochs.event in this case
             epochs,_,_ = paradigm.get_data(dataset=self.dataset,
-                    subjects=[self.subject], return_epochs=True)
+                        subjects=[self.subject], return_epochs=True)
             return epochs
 
         elif returns == "xy":
             x,y,_ = paradigm.get_data(dataset=self.dataset,
-                    subjects=[self.subject])
+                        subjects=[self.subject])
             return x, y
 
+
+    #-----------------------------------#
+    def _4c_rest(self)->None:
+        """ binary classifier: Rest/MI """
+
+        x_rest,_ = self._extract("xy", EVENT_IDX_4CLASS, self.t_rest)
+        x_mi,_ = self._extract("xy", EVENT_IDX_4CLASS, self.t_mi)
+
+        y_rest = np.array(['rest'] * x_rest.shape[0])
+        y_mi = np.array(['mi'] * x_mi.shape[0])
+
+        return np.concatenate((x_rest, x_mi)), np.concatenate((y_rest, y_mi))
+
+
+    #-----------------------------------#
+    def _4c_all(self)->None:
+        """ classifier: LH/RH/LF/RF (4class) """
+
+        x, y = self._extract("xy", EVENT_IDX_4CLASS, self.t_mi)
+        return x, y
+
+    #-----------------------------------#
+    def _4c_2class_hand(self)->None:
+        """ binary classifier (LH/RH) """
+
+        event_ids = dict(right_hand=1, left_hand=2)
+        x, y = self._extract("xy", event_ids, self.t_mi)
+        return x, y
+
+    #-----------------------------------#
+    def _4c_2class_foot(self)->None:
+        """ binary classifier (LF/RF) """
+
+        event_ids = dict(right_foot=3, left_foot=4)
+        x, y = self._extract("xy", event_ids, self.t_mi)
+        return x, y
+
+    #-----------------------------------#
+    def _4c_2class_hand_foot(self)->None:
+        """ binary classifier (LH+RH) & (LF+RF) """
         
-    #-----------------------------------#
-    def form_binary(self)->None:
-        """ get data for Rest/NoRest classifier"""
+        x1,_ = self._extract("xy", dict(right_hand=1, left_hand=2), self.t_mi)
+        x2,_ = self._extract("xy", dict(right_foot=3, left_foot=4), self.t_mi)
 
-        x_rest, _ = self._extract("xy", self.event_ids_all, self.t_rest)
-        x_mi, _ = self._extract("xy", self.event_ids_all, self.t_mi)
+        y1 = np.array(['hand'] * x1.shape[0])
+        y2 = np.array(['foot'] * x2.shape[0])
 
-        y_rest = np.zeros(x_rest.shape[0])
-        y_mi = np.ones(x_mi.shape[0])
-
-        x = np.concatenate((x_rest, x_mi))
-        y = np.concatenate((y_rest, y_mi))
-
-        return x, y
-
-    #-----------------------------------#
-    def form_mi_all(self)->None:
-        """ get data for MI model (4class), checked with moabb evaluation """
-
-        if (self.bandpass is not None) and (len(self.bandpass) > 1): 
-            x, y = self._extract("xy", self.event_ids_all, self.t_mi)
-            le = LabelEncoder()
-            y = le.fit_transform(y)
-
-        else:
-            epochs = self._extract("epochs", self.event_ids_all, self.t_mi)
-            x = epochs.get_data(units='uV')
-            y = epochs.events[:,-1]
-        return x, y
+        return np.concatenate((x1, x2)), np.concatenate((y1, y2))
 
 
     #-----------------------------------#
-    def form_mi_2class_hand(self)->None:
-        """ get data for MI model (LH/RH) """
+    def _4c_3class_rf(self)->None:
+        """ classifier (LH/RH/RF) """
 
-        if self.run_to_split is not None:
-            x, y = self._extract_split_run(self.event_ids_hand, self.t_mi)
-        else:
-            x, y = self._extract("xy", self.event_ids_hand, self.t_mi)
-        
-        le = LabelEncoder()
-        y = le.fit_transform(y)
-        return x, y
-
-
-    def form_mi_2class_foot(self)->None:
-        """ get data for MI model (LF/RF) """
-
-        if self.run_to_split is not None:
-            x, y = self._extract_split_run(self.event_ids_foot, self.t_mi)
-        else:
-            x, y = self._extract("xy", self.event_ids_foot, self.t_mi)
-
-        le = LabelEncoder()
-        y = le.fit_transform(y)
+        event_ids = dict(right_hand=1, left_hand=2, right_foot=3)
+        x, y = self._extract("xy", event_ids, self.t_mi)
         return x, y
 
     #-----------------------------------#
-    def form_mi_2class_hand_foot(self)->None:
-        """ get data for MI model (hand/foot) """
-        
-        if self.run_to_split is not None:
-            x1, _ = self._extract_split_run(self.event_ids_hand, self.t_mi)
-            x2, _ = self._extract_split_run(self.event_ids_foot, self.t_mi)
-        else:
-            x1,_ = self._extract("xy", self.event_ids_hand, self.t_mi)
-            x2,_ = self._extract("xy", self.event_ids_foot, self.t_mi)
+    def _4c_3class_lf(self)->None:
+        """ classifier (LH/RH/LF) """
 
-        y1 = np.zeros(x1.shape[0],)
-        y2 = np.ones(x2.shape[0],)
-        
-        x = np.concatenate((x1, x2))
-        y = np.concatenate((y1, y2))
+        event_ids = dict(right_hand=1, left_hand=2, left_foot=4)
+        x, y = self._extract("xy", event_ids, self.t_mi)
+        return x, y
 
-        le = LabelEncoder()
-        y = le.fit_transform(y)
+    #-----------------------------------#
+    def _8c_rest(self, t_rest=(2.5, 4.5))->None:
+        """ get data REST (using t_rest in the final 3s of trial.)"""
+
+        x,_ = self._extract("xy", EVENT_IDX_8CLASS, t_rest)
+        y = ["rest" if "_r" in i else "no_rest" for i in _]
+        y = np.array(y)
+        return x, y
+
+    #-----------------------------------#
+    def _8c_rest_base(self)->None:
+        """ get data REST BASE (using default t_rest before cue)"""
+
+        # REST BASE (using t_rest before cue)
+        x_mi,_ = self._extract("xy", EVENT_IDX_8CLASS, (0,2))
+        x_rest,_ = self._extract("xy", EVENT_IDX_8CLASS, (-4,-2))
+
+        y_rest = np.array(['rest'] * x_rest.shape[0])
+        y_mi = np.array(['mi'] * x_mi.shape[0])
+
+        return np.concatenate((x_rest, x_mi)), np.concatenate((y_rest, y_mi))
+
+
+    #-----------------------------------#
+    def _8c_mi(self)->None:
+        """ get data for MI-4class model in 8c protocol """
+
+        x, y_global  = self._extract("xy", EVENT_IDX_8CLASS, (0, 2))
+        y = [i[:-2] if "_r" in i else i for i in y_global]
+        y = np.array(y)
         return x, y
 
 
     #-----------------------------------#
-    def form_global(self)->None:
-        """ get data for MI model (8 class) """
+    def _8c_hand(self)->None:
+        """ get data for LH-RH model in 8c protocol """
 
-        x1, y_global = self._extract("xy", self.event_ids_all, (0, 2))
+        event_ids = dict(
+            right_hand=1, left_hand=2,
+            right_hand_r=5, left_hand_r=6,
+        )
+        x, y_global  = self._extract("xy", event_ids, (0, 2))
+        y = [i[:-2] if "_r" in i else i for i in y_global]
+        y = np.array(y)
+        return x, y
+    
+    #-----------------------------------#
+    def form_8c(self, t_rest=(2.5, 4.5))->None:
+        """ get data for combined validation"""
+        # MI
+        x1, y_global  = self._extract("xy", EVENT_IDX_8CLASS, (0, 2))
         y1 = [i[:-2] if "_r" in i else i for i in y_global]
-        
-        x2,_ = self._extract("xy", self.event_ids_all, (2.5, 4))
-        y2 = ["rest" if "_r" in i else "no_rest" for i in y_global]
-
-        # # debug
-        # for i in range(len(y_global)):
-        # 	print(f"index {i} | global: {y_global[i]}, local1: {y1[i]}, local2: {y2[i]}")
-
         le1 = LabelEncoder(); y1 = le1.fit_transform(y1)
+
+        ## REST
+        x2, _ = self._extract("xy", EVENT_IDX_8CLASS, t_rest)
+        y2 = ["rest" if "_r" in i else "no_rest" for i in y_global]
         le2 = LabelEncoder(); y2 = le2.fit_transform(y2)
-        le = LabelEncoder(); y_global = le.fit_transform(y_global)
 
-        # print(x1.shape)
-        # print(y1.shape)
-        a,b = np.unique(y1, return_counts=True)
-        print(f"y1: {y1.shape} | unique: {[(i,v) for (i,v) in zip(a,b)]}")
-
-        # print(x2.shape)
-        # print(y2.shape)
-        a,b = np.unique(y2, return_counts=True)
-        print(f"y2: {y2.shape} | unique: {[(i,v) for (i,v) in zip(a,b)]}")
+        # ## debug
+        # for i in range(len(y_global)):
+        #     print(f"index {i} | global: {y_global[i]}, local1: {y1[i]}, local2: {y2[i]}")
         
-        a,b = np.unique(y_global, return_counts=True)
-        print(f"y_global: {y_global.shape} | unique: {[(i,v) for (i,v) in zip(a,b)]}")
+        # fix
+        y2 = y2.reshape(-1,1) # for binary
+        x1 = x1[:,:,:-1]
+        x2 = x2[:,:,:-1]
 
-        data = (x1,y1,x2,y2,y_global, le1, le2, le)
-        return data
+        return (x1,y1,x2,y2, y_global, le1, le2)
 
 
 
@@ -251,21 +272,56 @@ class Formulate():
     def form(self, model_name:str) -> None:
         """ caller """
 
-        if model_name == "MI_2class_hand":
-            x, y = self.form_mi_2class_hand()
-        elif model_name == "MI_2class_foot":
-            x, y = self.form_mi_2class_foot()
-        elif model_name == "MI_2class_hand_foot":
-            x, y = self.form_mi_2class_hand_foot()
-        elif model_name == "MI_all":
-            x, y = self.form_mi_all()
-        elif model_name == "Rest/NoRest":
-            x, y = self.form_binary()
+        if model_name == "4c_rest":
+            x, y = self._4c_rest()
 
+        elif model_name == "4c_2class_handfoot":
+            x, y = self._4c_2class_hand_foot()
+
+        elif model_name == "4c_2class_hand":
+            x, y = self._4c_2class_hand()
+        
+        elif model_name == "4c_2class_foot":
+            x, y = self._4c_2class_foot()
+            
+        elif model_name == "4c_3class_lf":
+            x, y = self._4c_3class_lf()
+
+        elif model_name == "4c_3class_rf":
+            x, y = self._4c_3class_rf()
+
+        elif model_name == "4c_all":
+            x, y = self._4c_all()
+
+        elif model_name == "8c_rest":
+            x, y = self._8c_rest()
+        
+        elif model_name == "8c_hand":
+            x, y = self._8c_hand()
+
+        elif model_name == "8c_mi":
+            x, y = self._8c_mi()
+
+        else:
+            raise ValueError(f"model_name {model_name} is not supported")
+        
+        # check count
         print(f"\n({model_name}) | x: {x.shape}, y: {y.shape}")
         a,b = np.unique(y, return_counts=True)
         print(f"({model_name}) | unique: {[(i,v) for (i,v) in zip(a,b)]}")
 
-        return x, y
+        # redundancy
+        x = x[:,:,:-1]
+        
+        # encoder
+        le = LabelEncoder()
+        y = le.fit_transform(y)
+        
+        # # if binary, reshape label
+        # if len(a)==2:
+        #     y = y.reshape(-1,1)
 
-	
+        print(x.shape)
+        print(y.shape)
+
+        return x, y, le
